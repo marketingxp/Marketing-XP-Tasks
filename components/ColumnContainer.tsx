@@ -43,7 +43,8 @@ const ColumnContainer: React.FC<ColumnContainerProps> = ({
       type: 'Column',
       column,
     },
-    disabled: isReadOnly,
+    // We allow the sortable node to be active even in read-only mode so it acts as a valid droppable for tasks.
+    // However, we only pass listeners if it's not read-only to prevent clients from moving columns themselves.
   });
 
   const style = {
@@ -56,7 +57,7 @@ const ColumnContainer: React.FC<ColumnContainerProps> = ({
       <div
         ref={setNodeRef}
         style={style}
-        className="bg-slate-100/50 dark:bg-slate-900/20 border-2 border-dashed border-slate-200 dark:border-slate-800 w-[300px] sm:w-[320px] h-[700px] rounded-[2.5rem] flex-shrink-0"
+        className="bg-slate-100/50 dark:bg-slate-900/20 border-2 border-dashed border-slate-200 dark:border-slate-800 w-[300px] sm:w-[320px] h-full rounded-[2.5rem] flex-shrink-0"
       />
     );
   }
@@ -69,7 +70,7 @@ const ColumnContainer: React.FC<ColumnContainerProps> = ({
     <div
       ref={setNodeRef}
       style={style}
-      className="flex-shrink-0 w-[300px] sm:w-[320px] flex flex-col max-h-full group/col"
+      className="flex-shrink-0 w-[300px] sm:w-[320px] flex flex-col h-full group/col min-h-0"
     >
       <div className="flex items-center justify-between mb-5 px-2 cursor-default shrink-0">
         <div 
@@ -106,7 +107,7 @@ const ColumnContainer: React.FC<ColumnContainerProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar rounded-[2.5rem] bg-slate-100/30 dark:bg-slate-900/30 border border-slate-100/50 dark:border-slate-800/50 p-3.5 sm:p-4 min-h-[500px] transition-colors duration-300">
+      <div className="flex-1 overflow-y-auto custom-scrollbar rounded-[2.5rem] bg-slate-100/30 dark:bg-slate-900/30 border border-slate-100/50 dark:border-slate-800/50 p-3.5 sm:p-4 min-h-0 transition-colors duration-300">
         <SortableContext
           id={column.id}
           items={tasks.map((t) => t.id)}

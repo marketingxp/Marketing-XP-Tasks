@@ -10,6 +10,7 @@ import {
   DragStartEvent, 
   DragOverEvent, 
   DragEndEvent,
+  defaultDropAnimationSideEffects,
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import { GoogleGenAI } from "@google/genai";
@@ -34,6 +35,16 @@ const SESSION_KEY = 'marketing_xp_session';
 const THEME_KEY = 'marketing_xp_theme';
 const DB_CONFIG_KEY = 'marketing_xp_supabase_config';
 const RESEND_API_KEY = 're_WnKEj827_7aAsTY1QAVzDty2EUZ9z4VfX';
+
+const dropAnimation = {
+  sideEffects: defaultDropAnimationSideEffects({
+    styles: {
+      active: {
+        opacity: '0.5',
+      },
+    },
+  }),
+};
 
 const App: React.FC = () => {
   const [session, setSession] = useState<UserSession | null>(() => {
@@ -64,6 +75,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>('board');
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activeColumn, setActiveColumn] = useState<Column | null>(null);
+  const [draggedTaskInitialColumn, setDraggedTaskInitialColumn] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalColumnId, setModalColumnId] = useState<string | undefined>();
@@ -79,7 +91,6 @@ const App: React.FC = () => {
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' | 'error' } | null>(null);
 
-  // Ref to track the current editing task ID for the WebSocket closure
   const openTaskIdRef = useRef<string | null>(null);
 
   const isAdmin = session?.role === 'admin';
@@ -96,6 +107,27 @@ const App: React.FC = () => {
     }
   }, [isReadOnly, session]);
 
+  useEffect(() => {
+    if (session?.isLoggedIn && tasks.length > 0 && !isInitializing) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const taskIdParam = urlParams.get('taskId');
+      
+      if (taskIdParam) {
+        const targetTask = tasks.find(t => t.id === taskIdParam);
+        if (targetTask) {
+          if (!isAdmin && targetTask.clientId !== session.clientId) {
+            console.warn("Deep Link: Access denied to task for this client.");
+          } else {
+            setEditingTask(targetTask);
+            setIsModalOpen(true);
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, document.title, newUrl);
+          }
+        }
+      }
+    }
+  }, [session?.isLoggedIn, tasks, isInitializing, isAdmin]);
+
   const skipNextSync = useRef(false);
 
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
@@ -103,14 +135,46 @@ const App: React.FC = () => {
     setTimeout(() => setToast(null), 4000);
   };
 
+  const sendCompletionEmail = async (task: Task) => {
+    const client = clients.find(c => c.id === task.clientId);
+    if (!client || !client.email) return;
+
+    const taskUrl = `${window.location.origin}${window.location.pathname}?taskId=${task.id}`;
+
+    const emailBody = `
+      <div style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 40px; border: 1px solid #e2e8f0; border-radius: 24px; color: #1e293b; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <span style="background: #ecfdf5; color: #059669; padding: 6px 16px; border-radius: 100px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em;">Status Update: Completed</span>
+        </div>
+        <h2 style="color: #0f172a; margin-top: 0; font-size: 24px; font-weight: 800; text-align: center; letter-spacing: -0.02em;">${task.title}</h2>
+        <div style="height: 1px; background: #f1f5f9; margin: 24px 0;"></div>
+        <p style="color: #64748b; font-size: 16px; line-height: 1.6; margin-bottom: 32px; text-align: center;">Great news! We've successfully completed this task. You can review the results, associated assets, and any final notes directly in your portal.</p>
+        <div style="text-align: center;">
+          <a href="${taskUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 32px; border-radius: 14px; text-decoration: none; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; display: inline-block; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.2);">View Task Details</a>
+        </div>
+        <p style="text-align: center; color: #94a3b8; font-size: 11px; margin-top: 40px; font-weight: 500;">Sent automatically via Marketing XP Project Engine</p>
+      </div>
+    `;
+
+    try {
+      await dispatchEmailNotification({
+        from: "notifications@updates.marketingxp.co.uk",
+        to: client.email,
+        subject: `[Task Complete] ${task.title}`,
+        html: emailBody,
+        resendKey: RESEND_API_KEY
+      });
+      showToast(`Completion alert sent to ${client.name}`, "success");
+    } catch (e) {
+      console.error("Failed to send completion alert:", e);
+    }
+  };
+
   const updateStateFromRemote = (data: BoardData) => {
     skipNextSync.current = true;
     
     if (data.tasks) {
       setTasks(data.tasks);
-      
-      // CRITICAL: Directly update the open modal task if it matches the remote data
-      // This ensures that even for ReadOnly clients, the task modal state refreshes
       if (openTaskIdRef.current) {
         const matchingTask = data.tasks.find(t => t.id === openTaskIdRef.current);
         if (matchingTask) {
@@ -131,7 +195,6 @@ const App: React.FC = () => {
     if (data.globalLogo) setGlobalLogo(data.globalLogo);
   };
 
-  // Ensure our ref stays synced with the open modal
   useEffect(() => {
     openTaskIdRef.current = editingTask?.id || null;
   }, [editingTask?.id]);
@@ -160,7 +223,6 @@ const App: React.FC = () => {
             setDbStatus('connected');
           }
           
-          // Subscribe to live channel for instant propagation
           subscribeToBoardChanges((remoteData) => {
             setIsRemoteUpdate(true);
             updateStateFromRemote(remoteData);
@@ -217,15 +279,24 @@ const App: React.FC = () => {
     let nextTasks = [...tasks];
     if (editingTask) {
       const updatedTask = { ...editingTask, ...taskToSave } as Task;
+      
+      if (updatedTask.columnId === 'complete' && editingTask.columnId !== 'complete') {
+        sendCompletionEmail(updatedTask);
+      }
+      
       nextTasks = tasks.map(t => t.id === editingTask.id ? updatedTask : t);
       setTasks(nextTasks);
       if (!closeModal) {
         setEditingTask(updatedTask);
-        // Explicitly trigger sync for real-time feedback
         await triggerImmediateSync(nextTasks);
       }
     } else {
       const newTask: Task = { ...taskToSave, id: Math.random().toString(36).substr(2, 9), comments: [] } as Task;
+      
+      if (newTask.columnId === 'complete') {
+        sendCompletionEmail(newTask);
+      }
+      
       nextTasks = [newTask, ...tasks];
       setTasks(nextTasks);
       
@@ -378,9 +449,9 @@ const App: React.FC = () => {
 
   return (
     <div className={darkMode ? 'dark' : ''}>
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-theme flex flex-col overflow-hidden">
+      <div className="h-screen h-[100dvh] bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-theme flex flex-col overflow-hidden">
         
-        <header className="sticky top-0 z-40 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50">
+        <header className="shrink-0 z-40 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50">
           <div className="px-5 sm:px-10 py-3.5 sm:py-5">
             <div className="max-w-[1800px] mx-auto flex items-center justify-between gap-6">
               <div className="flex items-center gap-6 sm:gap-10 min-w-0">
@@ -406,7 +477,6 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Desktop Nav */}
                 <nav className="hidden xl:block bg-slate-100/50 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-slate-200/40 dark:border-slate-800/40">
                   <NavContent />
                 </nav>
@@ -444,7 +514,6 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Mobile Nav Row */}
           <div className="xl:hidden border-t border-slate-100/50 dark:border-slate-800/50 px-5 py-2 bg-slate-50/50 dark:bg-slate-950/50">
              <div className="max-w-[1800px] mx-auto overflow-x-auto custom-scrollbar no-scrollbar">
                 <div className="flex items-center gap-2 min-w-max">
@@ -454,11 +523,10 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-hidden flex flex-col">
+        <main className="flex-1 overflow-hidden min-h-0 flex flex-col">
           {currentView === 'board' ? (
             <>
-              {/* Board Toolbar */}
-              <div className="bg-white/50 dark:bg-slate-900/50 border-b border-slate-200/40 dark:border-slate-800/40 px-5 sm:px-10 py-4 flex flex-wrap items-center gap-6 sm:gap-10 shadow-sm relative z-30">
+              <div className="shrink-0 bg-white/50 dark:bg-slate-900/50 border-b border-slate-200/40 dark:border-slate-800/40 px-5 sm:px-10 py-4 flex flex-wrap items-center gap-6 sm:gap-10 shadow-sm relative z-30">
                 {isAdmin && (
                   <div className="flex items-center gap-3">
                     <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Portfolio</span>
@@ -504,11 +572,14 @@ const App: React.FC = () => {
               </div>
 
               <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={(e) => {
-                if (isReadOnly) return;
-                if (e.active.data.current?.type === 'Column') setActiveColumn(e.active.data.current.column);
-                else setActiveTask(e.active.data.current?.task || null);
+                if (e.active.data.current?.type === 'Column') {
+                  if (isAdmin) setActiveColumn(e.active.data.current.column);
+                } else {
+                  const task = e.active.data.current?.task || null;
+                  setActiveTask(task);
+                  if (task) setDraggedTaskInitialColumn(task.columnId);
+                }
               }} onDragOver={(e) => {
-                if (isReadOnly) return;
                 const { active, over } = e;
                 if (!over || active.id === over.id || active.data.current?.type !== 'Task') return;
                 setTasks((prev) => {
@@ -526,11 +597,21 @@ const App: React.FC = () => {
                   }
                   return arrayMove(prev, activeIdx, overIdx);
                 });
-              }} onDragEnd={() => { setActiveColumn(null); setActiveTask(null); }}>
-                <div className="flex-1 overflow-x-auto p-6 sm:p-10 flex gap-8 items-start custom-scrollbar board-container transition-all duration-500">
+              }} onDragEnd={(e) => { 
+                if (activeTask && draggedTaskInitialColumn && draggedTaskInitialColumn !== 'complete') {
+                  const taskAfterMove = tasks.find(t => t.id === activeTask.id);
+                  if (taskAfterMove && taskAfterMove.columnId === 'complete') {
+                    sendCompletionEmail(taskAfterMove);
+                  }
+                }
+                setActiveColumn(null); 
+                setActiveTask(null); 
+                setDraggedTaskInitialColumn(null);
+              }}>
+                <div className="flex-1 overflow-x-auto min-h-0 p-6 sm:p-10 flex gap-8 items-stretch custom-scrollbar board-container transition-all duration-500 pb-12">
                   <SortableContext items={columns.map(c => c.id)} strategy={horizontalListSortingStrategy}>
                     {columns.map(column => (
-                      <div key={column.id} className="column-snap flex-shrink-0">
+                      <div key={column.id} className="column-snap flex-shrink-0 flex flex-col h-full">
                           <ColumnContainer
                               column={column}
                               tasks={filteredTasks.filter(t => t.columnId === column.id)}
@@ -546,20 +627,39 @@ const App: React.FC = () => {
                     ))}
                   </SortableContext>
                 </div>
+                
+                <DragOverlay dropAnimation={dropAnimation}>
+                  {activeTask ? (
+                    <TaskCard
+                      task={activeTask}
+                      client={clients.find((c) => c.id === activeTask.clientId)}
+                      service={services.find((s) => s.name === activeTask.category)}
+                      onClick={() => {}}
+                      onDelete={() => {}}
+                      isDraggingOverlay
+                    />
+                  ) : null}
+                </DragOverlay>
               </DndContext>
             </>
           ) : currentView === 'clients' ? (
-            <ClientsView clients={sortedClients} tasks={tasks} onAddClient={(n, i, p, l, e) => setClients(prev => [...prev, { id: `c-${Date.now()}`, name: n, industry: i, password: p, logo: l, email: e, color: '#3b82f6' }])} onUpdateClient={(c) => setClients(prev => prev.map(x => x.id === c.id ? c : x))} onDeleteClient={(id) => setClients(prev => prev.filter(c => c.id !== id))} globalLogo={globalLogo} onUpdateGlobalLogo={setGlobalLogo} />
+            <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar pb-12">
+              <ClientsView clients={sortedClients} tasks={tasks} onAddClient={(n, i, p, l, e) => setClients(prev => [...prev, { id: `c-${Date.now()}`, name: n, industry: i, password: p, logo: l, email: e, color: '#3b82f6' }])} onUpdateClient={(c) => setClients(prev => prev.map(x => x.id === c.id ? c : x))} onDeleteClient={(id) => setClients(prev => prev.filter(c => c.id !== id))} globalLogo={globalLogo} onUpdateGlobalLogo={setGlobalLogo} />
+            </div>
           ) : currentView === 'profile' && isReadOnly && currentClient ? (
-            <ClientProfileView 
-              client={currentClient} 
-              onUpdateClient={(updated) => {
-                setClients(prev => prev.map(c => c.id === updated.id ? updated : c));
-                showToast("Profile updated successfully.", "success");
-              }} 
-            />
+            <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar pb-12">
+              <ClientProfileView 
+                client={currentClient} 
+                onUpdateClient={(updated) => {
+                  setClients(prev => prev.map(c => c.id === updated.id ? updated : c));
+                  showToast("Profile updated successfully.", "success");
+                }} 
+              />
+            </div>
           ) : (
-            <ServicesView services={services} onAddService={(s) => setServices(prev => [...prev, { ...s, id: `s-${Date.now()}` }])} onUpdateService={(s) => setServices(prev => prev.map(x => x.id === s.id ? s : x))} onDeleteService={(id) => setServices(prev => prev.filter(s => s.id !== id))} />
+            <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar pb-12">
+              <ServicesView services={services} onAddService={(s) => setServices(prev => [...prev, { ...s, id: `s-${Date.now()}` }])} onUpdateService={(s) => setServices(prev => prev.map(x => x.id === s.id ? s : x))} onDeleteService={(id) => setServices(prev => prev.filter(s => s.id !== id))} />
+            </div>
           )}
         </main>
 

@@ -13,9 +13,19 @@ interface TaskCardProps {
   client?: Client;
   service?: Service;
   isReadOnly?: boolean;
+  isDraggingOverlay?: boolean;
 }
 
-const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, onDuplicate, client, service, isReadOnly = false }) => {
+const TaskCard: React.FC<TaskCardProps> = ({ 
+  task, 
+  onClick, 
+  onDelete, 
+  onDuplicate, 
+  client, 
+  service, 
+  isReadOnly = false,
+  isDraggingOverlay = false 
+}) => {
   const {
     attributes,
     listeners,
@@ -29,7 +39,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, onDuplicat
       type: 'Task',
       task,
     },
-    disabled: isReadOnly,
+    // We remove the disabled: isReadOnly to allow clients to drag cards.
   });
 
   const style = {
@@ -37,12 +47,12 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, onDuplicat
     transform: CSS.Translate.toString(transform),
   };
 
-  if (isDragging) {
+  if (isDragging && !isDraggingOverlay) {
     return (
       <div
         ref={setNodeRef}
         style={style}
-        className="opacity-20 h-[120px] bg-slate-100 dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-700 w-full mb-3"
+        className="h-[140px] w-full mb-3.5 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 animate-pulse transition-all"
       />
     );
   }
@@ -71,17 +81,25 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, onDuplicat
     }
   };
 
+  const containerClasses = `
+    group/card flex flex-col p-4 mb-3.5 rounded-2xl border shadow-premium transition-all duration-300
+    ${isClientRequest ? 'border-rose-200 dark:border-rose-900' : 'border-slate-100 dark:border-slate-700'}
+    ${isDraggingOverlay 
+      ? 'bg-white dark:bg-slate-800 scale-[1.03] rotate-2 shadow-2xl z-50 cursor-grabbing border-blue-400 dark:border-blue-500/50 ring-4 ring-blue-500/5' 
+      : 'bg-white dark:bg-slate-800 hover:-translate-y-1 hover:shadow-premium-hover hover:border-slate-200 dark:hover:border-slate-600'
+    }
+    ${isDraggingOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'}
+  `;
+
   return (
     <div
       ref={setNodeRef}
       style={style}
-      {...(isReadOnly ? {} : { ...attributes, ...listeners })}
+      {...attributes}
+      {...listeners}
       onClick={handleCardClick}
-      className={`group bg-white dark:bg-slate-800 rounded-2xl shadow-premium hover:shadow-premium-hover border p-4 mb-3.5 transition-all duration-300 relative flex flex-col ${
-        isClientRequest ? 'border-rose-200 dark:border-rose-900' : 'border-slate-100 dark:border-slate-700'
-      } ${isReadOnly ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing active:scale-[0.98]'}`}
+      className={containerClasses}
     >
-      {/* Card Header: Category & Actions */}
       <div className="flex justify-between items-start gap-2 mb-3">
         <div className="flex flex-wrap gap-1.5 items-center">
           <span className={`text-[9px] font-black uppercase tracking-[0.15em] px-2 py-0.5 rounded-lg border flex-shrink-0 transition-colors ${serviceColorClass}`}>
@@ -92,18 +110,18 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, onDuplicat
           </span>
         </div>
         
-        {!isReadOnly && (
-          <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        {!isReadOnly && !isDraggingOverlay && (
+          <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover/card:opacity-100 transition-opacity">
             <button 
               onClick={handleDuplicateClick}
-              className="p-1.5 text-slate-400 hover:text-blue-500 transition-colors bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-700 touch-manipulation"
+              className="p-1.5 text-slate-400 hover:text-blue-500 transition-colors bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-700 touch-manipulation shadow-sm"
               title="Duplicate task"
             >
               <DuplicateIcon className="w-3.5 h-3.5" />
             </button>
             <button 
               onClick={handleDeleteClick}
-              className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-700 touch-manipulation"
+              className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-700 touch-manipulation shadow-sm"
               title="Delete task"
             >
               <TrashIcon className="w-3.5 h-3.5" />
@@ -112,18 +130,16 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, onDuplicat
         )}
       </div>
       
-      {/* Card Content: Title & Description */}
       <div className="mb-4">
         <h3 className="font-extrabold text-slate-900 dark:text-slate-100 mb-1.5 leading-tight text-sm tracking-tight break-words">
           {task.title}
         </h3>
         
-        <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-relaxed break-words whitespace-pre-wrap line-clamp-2 group-hover:line-clamp-none transition-all duration-300">
+        <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-relaxed break-words whitespace-pre-wrap line-clamp-2 group-hover/card:line-clamp-none transition-all duration-300">
           {task.description}
         </p>
       </div>
 
-      {/* Card Footer: Metadata */}
       <div className="mt-auto pt-3.5 border-t border-slate-50 dark:border-slate-700/50 flex flex-col gap-3">
         {client && (
           <div className="flex items-center gap-2.5">
