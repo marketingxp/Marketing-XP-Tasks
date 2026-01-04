@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import DarkVeil from './DarkVeil';
-import { ShieldIcon } from './Icons';
+import { ShieldIcon, KeyIcon } from './Icons';
 import { fetchBoardFromSupabase } from '../supabase';
 
 interface LoginViewProps {
@@ -12,13 +12,14 @@ interface LoginViewProps {
 const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<'admin' | 'client'>('admin');
+  const [mode, setMode] = useState<'admin' | 'client'>('client');
   
   // Manager Credentials
   const [managerUsername, setManagerUsername] = useState('');
   const [managerPin, setManagerPin] = useState('');
   
   // Client Credentials
+  const [clientEmail, setClientEmail] = useState('');
   const [clientPin, setClientPin] = useState('');
 
   // Required Manager Credentials
@@ -33,10 +34,10 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
     // Artificial delay for "decrypting" feel
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    if (managerUsername === VALID_MANAGER_USER && managerPin === VALID_MANAGER_PIN) {
+    if (managerUsername.toLowerCase() === VALID_MANAGER_USER && managerPin === VALID_MANAGER_PIN) {
       onAuthenticated(VALID_MANAGER_USER, "admin");
     } else {
-      setError("Security Alert: Invalid Username or PIN.");
+      setError("Security Alert: Invalid Manager Credentials.");
       setLoading(false);
     }
   };
@@ -46,9 +47,11 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
     setLoading(true);
     setError(null);
 
+    const inputEmail = clientEmail.trim().toLowerCase();
     const inputPin = clientPin.trim();
-    if (inputPin.length !== 6) {
-      setError("Invalid PIN format. Must be 6 digits.");
+    
+    if (!inputEmail || inputPin.length !== 6) {
+      setError("Please provide a valid email and 6-digit PIN.");
       setLoading(false);
       return;
     }
@@ -62,7 +65,9 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
       }
     } catch (e) {}
 
-    let client = clientsList.find((c: any) => c.password === inputPin);
+    let client = clientsList.find((c: any) => 
+      c.email?.toLowerCase() === inputEmail && c.password === inputPin
+    );
 
     // 2. If not found locally, attempt a Cloud Handshake
     if (!client) {
@@ -71,7 +76,9 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
         if (remoteData && remoteData.clients) {
           // Update local cache so the dashboard is hydrated immediately after login
           localStorage.setItem('marketing_xp_board_v1', JSON.stringify(remoteData));
-          client = remoteData.clients.find((c: any) => c.password === inputPin);
+          client = remoteData.clients.find((c: any) => 
+            c.email?.toLowerCase() === inputEmail && c.password === inputPin
+          );
         }
       } catch (err: any) {
         console.error("Cloud Auth Failure:", err.message || err);
@@ -85,7 +92,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
         setLoading(false);
       }, 600);
     } else {
-      setError("Unauthorized: PIN not recognized in the cloud vault.");
+      setError("Unauthorized: Credentials not recognized in the vault.");
       setLoading(false);
     }
   };
@@ -97,6 +104,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 selection:bg-blue-500/30 relative overflow-hidden">
+      {/* Dynamic Background */}
       <div className="absolute inset-0 z-0 opacity-60">
         <DarkVeil 
           hueShift={-10}
@@ -107,12 +115,22 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
         />
       </div>
 
-      <div className="absolute inset-0 bg-slate-950/40 pointer-events-none z-[1]" />
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-[1]">
-        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-blue-600/5 rounded-full blur-[120px]" />
-        <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-indigo-600/5 rounded-full blur-[120px]" />
+      {/* Top Right Manager Access */}
+      <div className="absolute top-6 right-6 z-20">
+        <button 
+          onClick={() => {
+            setMode(mode === 'client' ? 'admin' : 'client');
+            setError(null);
+          }}
+          className="px-4 py-2 bg-slate-900/50 hover:bg-slate-800/80 backdrop-blur-md border border-slate-800 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-blue-400 transition-all flex items-center gap-2 group"
+        >
+          <ShieldIcon className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100" />
+          {mode === 'client' ? 'Manager Access' : 'Return to Portal'}
+        </button>
       </div>
 
+      <div className="absolute inset-0 bg-slate-950/40 pointer-events-none z-[1]" />
+      
       <div className="w-full max-w-md relative z-10">
         <div className="absolute -inset-0.5 bg-gradient-to-b from-blue-500/10 to-slate-800/10 rounded-[2.2rem] blur-sm opacity-50" />
         
@@ -126,28 +144,17 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
             </div>
           </div>
 
-          <div className="text-center mb-8">
-            <h1 className="text-xl font-bold text-white tracking-tight mb-2">Secure Task Gateway</h1>
+          <div className="text-center mb-10">
+            <h1 className="text-xl font-bold text-white tracking-tight mb-2">
+              {mode === 'client' ? 'Client Portal' : 'Agency Control Center'}
+            </h1>
             <div className="flex items-center justify-center gap-2">
-              <span className="w-1 h-1 rounded-full bg-blue-500" />
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.3em]">Access Management</p>
-              <span className="w-1 h-1 rounded-full bg-blue-500" />
+              <span className={`w-1 h-1 rounded-full ${mode === 'client' ? 'bg-blue-500' : 'bg-rose-500'}`} />
+              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.3em]">
+                {mode === 'client' ? 'Secure Login' : 'System Administration'}
+              </p>
+              <span className={`w-1 h-1 rounded-full ${mode === 'client' ? 'bg-blue-500' : 'bg-rose-500'}`} />
             </div>
-          </div>
-
-          <div className="flex p-1 bg-slate-950/50 rounded-2xl mb-8 border border-slate-800/50 shadow-inner">
-            <button 
-              onClick={() => { setMode('admin'); setError(null); }}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all duration-300 ${mode === 'admin' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              Manager Entry
-            </button>
-            <button 
-              onClick={() => { setMode('client'); setError(null); }}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all duration-300 ${mode === 'client' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              Client Portal
-            </button>
           </div>
 
           {error && (
@@ -161,7 +168,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
               <div className="space-y-4">
                 <div className="group">
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1 group-focus-within:text-blue-500 transition-colors">
-                    Username
+                    Admin ID
                   </label>
                   <input
                     required
@@ -175,7 +182,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
                 
                 <div className="group">
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1 group-focus-within:text-blue-500 transition-colors">
-                    PIN Code
+                    Passkey
                   </label>
                   <input
                     required
@@ -200,21 +207,39 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
               </div>
             </form>
           ) : (
-            <form onSubmit={handleClientAuth} className="space-y-6">
-              <div className="group">
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1 group-focus-within:text-blue-500 transition-colors">
-                  Client Portal Access PIN
-                </label>
-                <input
-                  required
-                  autoFocus
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Enter your 6-digit PIN"
-                  className="w-full px-5 py-3.5 bg-slate-950/50 border border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none text-white placeholder:text-slate-700 transition-all font-mono text-sm shadow-inner tracking-[0.5em] text-center"
-                  value={clientPin}
-                  onChange={handleClientPinChange}
-                />
+            <form onSubmit={handleClientAuth} className="space-y-5">
+              <div className="space-y-4">
+                <div className="group">
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1 group-focus-within:text-blue-500 transition-colors">
+                    Account Email
+                  </label>
+                  <input
+                    required
+                    type="email"
+                    placeholder="client@company.com"
+                    className="w-full px-5 py-3.5 bg-slate-950/50 border border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none text-white placeholder:text-slate-700 transition-all text-sm font-medium shadow-inner"
+                    value={clientEmail}
+                    onChange={(e) => setClientEmail(e.target.value)}
+                  />
+                </div>
+                
+                <div className="group">
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1 group-focus-within:text-blue-500 transition-colors">
+                    Portal Access PIN
+                  </label>
+                  <div className="relative">
+                    <input
+                      required
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Enter your 6-digit PIN"
+                      className="w-full px-5 py-3.5 bg-slate-950/50 border border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none text-white placeholder:text-slate-700 transition-all font-mono text-sm shadow-inner tracking-[0.5em] text-center"
+                      value={clientPin}
+                      onChange={handleClientPinChange}
+                    />
+                    <KeyIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-700 pointer-events-none" />
+                  </div>
+                </div>
               </div>
               
               <button
@@ -225,14 +250,14 @@ const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, logo }) => {
                 {loading ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                    <span>Verifying Cloud Vault...</span>
+                    <span>Verifying Identity...</span>
                   </>
-                ) : "Access My Dashboard"}
+                ) : "Access Dashboard"}
               </button>
               
               <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 text-center">
                 <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed">
-                  Confidential View Only
+                  Confidential View Only Access
                 </p>
               </div>
             </form>

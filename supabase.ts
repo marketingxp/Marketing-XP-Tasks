@@ -1,39 +1,13 @@
 
-/* 
-IMPORTANT: To fix the "Failed to send a request" error, you MUST update your 
-Supabase Edge Function (send-resend-email) with this code to handle CORS:
-
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
-  try {
-    const { from, to, subject, html, resendKey } = await req.json()
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${resendKey}` },
-      body: JSON.stringify({ from, to, subject, html }),
-    })
-    const data = await res.json()
-    return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 })
-  }
-})
-*/
-
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
-import { BoardData, AppNotification } from './types';
+import { BoardData } from './types';
 
 export interface SupabaseConfig {
   url: string;
   key: string;
 }
 
-// Credentials provided for the Marketing XP project
+// Default credentials for the Marketing XP project
 const AUTO_URL = "https://lvuhcyhsyghezfvqdopp.supabase.co";
 const AUTO_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2dWhjeWhzeWdoZXpmdnFkb3BwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzMzMTcwMSwiZXhwIjoyMDgyOTA3NzAxfQ.86VAm2r53ArZ0sGYppYz7o_04zEjTYCJnaYEFvODxpg";
 
@@ -68,7 +42,7 @@ export const isAutoConnected = () => !!(ENV_URL && ENV_KEY);
 
 /**
  * Dispatches an email via Supabase Edge Function.
- * Direct fetch is used to ensure maximum control over CORS and headers.
+ * Uses direct fetch for precise header control to avoid CORS "Failed to fetch" errors.
  */
 export const dispatchEmailNotification = async (payload: {
   from: string;
@@ -77,10 +51,11 @@ export const dispatchEmailNotification = async (payload: {
   html: string;
   resendKey: string;
 }) => {
-  const targetUrl = `${ENV_URL}/functions/v1/send-resend-email`;
+  // Use the correct function name: send-resend-email
+  const targetUrl = `${ENV_URL}/functions/v1/rapid-function`;
   
   try {
-    console.log("Email Dispatch: Attempting delivery...");
+    console.log("Email Dispatch: Contacting Edge Gateway...");
     
     const response = await fetch(targetUrl, {
       method: 'POST',
@@ -95,21 +70,20 @@ export const dispatchEmailNotification = async (payload: {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`Edge Function Rejected Request (${response.status}):`, errorText);
+      console.error(`Edge Function Error (${response.status}):`, errorText);
       return false;
     }
 
     const data = await response.json();
     if (data && data.id) {
-      console.log("Email Dispatch: Success. ID:", data.id);
+      console.log("Email Dispatch: Delivered to Resend. ID:", data.id);
       return true;
     }
 
-    console.warn("Email Dispatch: Partial success (no ID returned).", data);
+    console.warn("Email Dispatch: Partial success, no delivery ID found.", data);
     return false;
   } catch (e: any) {
-    console.error("Email Dispatch: Transport-level failure.", e.message);
-    console.error("Diagnostic: If this is 'Failed to fetch', ensure the Edge Function has CORS headers and the URL is correct.");
+    console.error("Email Dispatch: Critical network failure.", e.message);
     return false;
   }
 };

@@ -25,9 +25,10 @@ import ClientsView from './components/ClientsView';
 import ServicesView from './components/ServicesView';
 import ColumnContainer from './components/ColumnContainer';
 import LoginView from './components/LoginView';
+import ClientProfileView from './components/ClientProfileView';
 import { PlusIcon, SearchIcon, SunIcon, MoonIcon, ExportIcon, ImportIcon, LogoutIcon, GithubIcon, CloudIcon } from './components/Icons';
 
-type ViewType = 'board' | 'clients' | 'services';
+type ViewType = 'board' | 'clients' | 'services' | 'profile';
 
 const STORAGE_KEY = 'marketing_xp_board_v1';
 const SESSION_KEY = 'marketing_xp_session';
@@ -87,10 +88,6 @@ const App: React.FC = () => {
   const sortedClients = useMemo(() => {
     return [...clients].sort((a, b) => a.name.localeCompare(b.name));
   }, [clients]);
-
-  useEffect(() => {
-    if (isReadOnly && currentView !== 'board') setCurrentView('board');
-  }, [isReadOnly, currentView]);
 
   useEffect(() => {
     if (isReadOnly && session?.clientId) setClientFilter(session.clientId);
@@ -221,19 +218,12 @@ const App: React.FC = () => {
             <div style="background: #f8fafc; padding: 25px; border-radius: 16px; margin-top: 25px; border: 1px solid #f1f5f9;">
               <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #334155; white-space: pre-wrap;">${newTask.description}</p>
             </div>
-            <div style="margin-top: 40px; text-align: center;">
-              <p style="font-size: 11px; color: #94a3b8; font-weight: 500; letter-spacing: 0.05em;">
-                MANAGED VIA MARKETING XP VAULT
-              </p>
-            </div>
           </div>
         `;
 
-        // The verified sender domain address
         const sender = "notifications@updates.marketingxp.co.uk";
         const recipient = "matt@marketingxp.co.uk";
 
-        console.log("Email Dispatch: Triggering cloud handshake...");
         dispatchEmailNotification({
           from: sender,
           to: recipient,
@@ -242,10 +232,10 @@ const App: React.FC = () => {
           resendKey: RESEND_API_KEY
         }).then(success => {
           if (success) {
-            console.log("Email Dispatch: Verified. Matt will receive the email shortly.");
+            console.log("Email Dispatch: Success.");
           } else {
-            console.error("Email Dispatch: Failed. See console for CORS or status errors.");
-            showToast("Network Alert: Cloud dispatch failed. Ensure Edge Function CORS is set.", "error");
+            console.error("Email Dispatch: Failed.");
+            showToast("Network Alert: Cloud dispatch failed. Ensure CORS is active.", "error");
           }
         });
       }
@@ -286,6 +276,8 @@ const App: React.FC = () => {
 
   if (!session?.isLoggedIn) return <LoginView onAuthenticated={handleAuthenticated} logo={globalLogo} />;
 
+  const currentClient = clients.find(c => c.id === session.clientId);
+
   return (
     <div className={darkMode ? 'dark' : ''}>
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-300 flex flex-col">
@@ -301,11 +293,13 @@ const App: React.FC = () => {
               </div>
               <nav className="hidden md:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl">
                 <button onClick={() => setCurrentView('board')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'board' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Workflow</button>
-                {isAdmin && (
+                {isAdmin ? (
                   <>
                     <button onClick={() => setCurrentView('clients')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'clients' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Clients</button>
                     <button onClick={() => setCurrentView('services')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'services' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Services</button>
                   </>
+                ) : (
+                  <button onClick={() => setCurrentView('profile')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'profile' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>My Profile</button>
                 )}
               </nav>
             </div>
@@ -316,78 +310,11 @@ const App: React.FC = () => {
               </div>
               <div className="flex items-center gap-1">
                 <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">{darkMode ? <SunIcon /> : <MoonIcon />}</button>
-                {isAdmin && (
-                  <div className="relative group">
-                    <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-slate-900 bg-rose-500 ${notifications.some(n => !n.read) ? 'scale-100' : 'scale-0'} transition-transform`} />
-                    <button className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-                    </button>
-                    <div className="absolute top-full right-0 mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl opacity-0 translate-y-2 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-200 z-50 p-2 overflow-hidden">
-                      <div className="p-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pulse Requests</span>
-                        <button onClick={() => setNotifications(prev => prev.map(n => ({...n, read: true})))} className="text-[9px] font-bold text-blue-500 uppercase tracking-widest">Mark All Read</button>
-                      </div>
-                      <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                        {notifications.length > 0 ? notifications.map(n => (
-                          <div key={n.id} className={`p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors rounded-xl flex flex-col gap-1 cursor-pointer ${!n.read ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''}`} onClick={() => {
-                            const task = tasks.find(t => t.id === n.taskId);
-                            if (task) { setEditingTask(task); setIsModalOpen(true); }
-                          }}>
-                            <div className="flex justify-between items-start">
-                              <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">{n.clientName}</span>
-                              <span className="text-[8px] text-slate-400">{new Date(n.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
-                            <p className="text-xs font-bold text-slate-700 dark:text-slate-300 truncate">{n.message}</p>
-                          </div>
-                        )) : (
-                          <div className="p-8 text-center"><p className="text-[10px] font-black uppercase text-slate-400 italic">No activity</p></div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div className="w-[1px] h-4 bg-slate-200 dark:bg-slate-800 mx-1" />
-                {isAdmin && (
-                  <>
-                    <button onClick={() => setIsDbModalOpen(true)} className={`p-2 rounded-lg transition-colors ${dbStatus === 'connected' ? 'text-emerald-500' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`} title="Cloud Sync"><CloudIcon /></button>
-                    <button onClick={() => setIsGithubModalOpen(true)} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" title="GitHub Pulse"><GithubIcon /></button>
-                  </>
-                )}
                 <button onClick={handleLogout} className="p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors" title="Logout"><LogoutIcon /></button>
               </div>
             </div>
           </div>
         </header>
-
-        {currentView === 'board' && (
-          <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-2 flex items-center justify-between">
-            <div className="max-w-[1600px] flex items-center gap-4 text-[10px] font-black uppercase tracking-widest text-slate-400">
-              <div className="flex items-center gap-2">
-                <span>Filter:</span>
-                <select className="bg-transparent border-none text-slate-600 dark:text-slate-300 focus:ring-0 cursor-pointer" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-                  <option value="All">All Services</option>
-                  {services.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                </select>
-              </div>
-              <div className="w-[1px] h-3 bg-slate-200 dark:bg-slate-800" />
-              <div className="flex items-center gap-2">
-                <span>Account:</span>
-                {isReadOnly ? (
-                  <span className="text-blue-500 font-bold">{session?.username}</span>
-                ) : (
-                  <select className="bg-transparent border-none text-slate-600 dark:text-slate-300 focus:ring-0 cursor-pointer" value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
-                    <option value="All">All Clients</option>
-                    {sortedClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                )}
-              </div>
-            </div>
-            <div className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-tighter transition-colors ${dbStatus === 'connected' ? 'text-emerald-500' : 'text-slate-400'}`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${dbStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
-              {dbStatus === 'connected' ? 'Cloud Vault Linked' : 'Archive Mode'}
-            </div>
-          </div>
-        )}
 
         <main className="flex-1 overflow-hidden">
           {currentView === 'board' ? (
@@ -433,12 +360,17 @@ const App: React.FC = () => {
                   ))}
                 </SortableContext>
               </div>
-              <DragOverlay>
-                {activeTask ? <TaskCard task={activeTask} client={sortedClients.find(c => c.id === activeTask.clientId)} service={services.find(s => s.name === activeTask.category)} onClick={()=>{}} onDelete={()=>{}} /> : null}
-              </DragOverlay>
             </DndContext>
           ) : currentView === 'clients' ? (
             <ClientsView clients={sortedClients} tasks={tasks} onAddClient={(n, i, p, l, e) => setClients(prev => [...prev, { id: `c-${Date.now()}`, name: n, industry: i, password: p, logo: l, email: e, color: '#3b82f6' }])} onUpdateClient={(c) => setClients(prev => prev.map(x => x.id === c.id ? c : x))} onDeleteClient={(id) => setClients(prev => prev.filter(c => c.id !== id))} globalLogo={globalLogo} onUpdateGlobalLogo={setGlobalLogo} />
+          ) : currentView === 'profile' && isReadOnly && currentClient ? (
+            <ClientProfileView 
+              client={currentClient} 
+              onUpdateClient={(updated) => {
+                setClients(prev => prev.map(c => c.id === updated.id ? updated : c));
+                showToast("Profile updated successfully.", "success");
+              }} 
+            />
           ) : (
             <ServicesView services={services} onAddService={(s) => setServices(prev => [...prev, { ...s, id: `s-${Date.now()}` }])} onUpdateService={(s) => setServices(prev => prev.map(x => x.id === s.id ? s : x))} onDeleteService={(id) => setServices(prev => prev.filter(s => s.id !== id))} />
           )}
@@ -456,16 +388,7 @@ const App: React.FC = () => {
           currentClientId={session?.clientId}
           currentUsername={session?.username}
         />
-        <GithubImportModal isOpen={isGithubModalOpen} onClose={() => setIsGithubModalOpen(false)} onImport={(it) => setTasks(prev => [...prev, ...it])} services={services} columns={columns} />
-        <DbSettingsModal isOpen={isDbModalOpen} onClose={() => setIsDbModalOpen(false)} onSave={(u, k) => {
-          const config = { url: u, key: k };
-          setDbConfig(config);
-          localStorage.setItem(DB_CONFIG_KEY, JSON.stringify(config));
-          initSupabase(config);
-          setIsDbModalOpen(false);
-          showToast("Cloud connection established.", "success");
-        }} currentUrl={dbConfig?.url} currentKey={dbConfig?.key} />
-
+        
         {toast && (
           <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-4 duration-300 ${toast.type === 'error' ? 'bg-rose-600 text-white' : toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>
             <span className="text-xs font-bold uppercase tracking-widest text-center">{toast.message}</span>
