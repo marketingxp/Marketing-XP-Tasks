@@ -38,6 +38,15 @@ export interface Task {
   comments?: TaskComment[];
 }
 
+export interface AppNotification {
+  id: string;
+  taskId: string;
+  clientName: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+}
+
 export interface Column {
   id: string;
   title: string;
@@ -48,6 +57,7 @@ export interface BoardData {
   columns: Column[];
   clients: Client[];
   services: Service[];
+  notifications?: AppNotification[];
   globalLogo?: string;
   version: string;
 }
