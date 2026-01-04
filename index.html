@@ -3,16 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Digital Marketing Kanban</title>
+    <title>Marketing XP | Project Management Platform</title>
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <meta name="description" content="Secure access to Marketing XP's client project management Trello-style dashboard. Learn more at marketingxp.co.uk">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Configure Tailwind for class-based dark mode
+      // Configure Tailwind for class-based dark mode with custom theme extensions
       tailwind.config = {
         darkMode: 'class',
         theme: {
           extend: {
             fontFamily: {
               inter: ['Inter', 'sans-serif'],
+            },
+            boxShadow: {
+              'premium': '0 10px 15px -3px rgba(0, 0, 0, 0.04), 0 4px 6px -2px rgba(0, 0, 0, 0.02)',
+              'premium-hover': '0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.03)',
             },
           },
         },
@@ -32,22 +38,38 @@
     <style>
         body {
             font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Smooth transitions for theme switching */
+        .transition-theme {
+            transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                        border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+                        color 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         }
         /* Custom scrollbar for board */
         .custom-scrollbar::-webkit-scrollbar {
-            height: 10px;
-            width: 8px;
+            height: 6px;
+            width: 6px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
             background: transparent;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
+            background: #e2e8f0;
             border-radius: 10px;
         }
         .dark .custom-scrollbar::-webkit-scrollbar-thumb {
             background: #1e293b;
             border: 2px solid #020617;
+        }
+        /* Scroll snapping for mobile */
+        .board-container {
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+        }
+        .column-snap {
+            scroll-snap-align: start;
+            scroll-snap-stop: always;
         }
         /* Pulse for sync indicator */
         @keyframes sync-pulse {
@@ -75,7 +97,7 @@
 }
 </script>
 </head>
-<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-300">
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-theme overflow-hidden">
     <div id="root"></div>
 </body>
 </html>

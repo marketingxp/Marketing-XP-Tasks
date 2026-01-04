@@ -138,13 +138,13 @@ const GithubImportModal: React.FC<GithubImportModalProps> = ({ isOpen, onClose, 
                 className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-white placeholder:text-slate-500 font-medium"
                 value={repo}
                 onChange={(e) => setRepo(e.target.value)}
-                placeholder="e.g. facebook/react"
+                placeholder="facebook/react"
               />
             </div>
           </div>
 
           {status && (
-            <div className="mt-4 flex items-center gap-2 text-[10px] font-bold text-blue-500 uppercase tracking-widest animate-pulse">
+            <div className="mt-4 flex items-center gap-2 text-[10px] font-bold text-blue-500 uppercase tracking-widest">
               <div className="w-1 h-1 rounded-full bg-blue-500" />
               {status}
             </div>

@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   DndContext, 
@@ -26,7 +25,7 @@ import ServicesView from './components/ServicesView';
 import ColumnContainer from './components/ColumnContainer';
 import LoginView from './components/LoginView';
 import ClientProfileView from './components/ClientProfileView';
-import { PlusIcon, SearchIcon, SunIcon, MoonIcon, ExportIcon, ImportIcon, LogoutIcon, GithubIcon, CloudIcon } from './components/Icons';
+import { PlusIcon, SearchIcon, SunIcon, MoonIcon, ExportIcon, ImportIcon, LogoutIcon, GithubIcon, CloudIcon, CalendarIcon, SEOIcon } from './components/Icons';
 
 type ViewType = 'board' | 'clients' | 'services' | 'profile';
 
@@ -67,8 +66,6 @@ const App: React.FC = () => {
   const [activeColumn, setActiveColumn] = useState<Column | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
-  const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [modalColumnId, setModalColumnId] = useState<string | undefined>();
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
@@ -82,6 +79,9 @@ const App: React.FC = () => {
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' | 'error' } | null>(null);
 
+  // Ref to track the current editing task ID for the WebSocket closure
+  const openTaskIdRef = useRef<string | null>(null);
+
   const isAdmin = session?.role === 'admin';
   const isReadOnly = session?.role === 'client';
 
@@ -90,20 +90,35 @@ const App: React.FC = () => {
   }, [clients]);
 
   useEffect(() => {
-    if (isReadOnly && session?.clientId) setClientFilter(session.clientId);
+    if (isReadOnly && session?.clientId) {
+      setClientFilter(session.clientId);
+      setCurrentView('board');
+    }
   }, [isReadOnly, session]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const skipNextSync = useRef(false);
 
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 6000);
+    setTimeout(() => setToast(null), 4000);
   };
 
   const updateStateFromRemote = (data: BoardData) => {
     skipNextSync.current = true;
-    if (data.tasks) setTasks(data.tasks);
+    
+    if (data.tasks) {
+      setTasks(data.tasks);
+      
+      // CRITICAL: Directly update the open modal task if it matches the remote data
+      // This ensures that even for ReadOnly clients, the task modal state refreshes
+      if (openTaskIdRef.current) {
+        const matchingTask = data.tasks.find(t => t.id === openTaskIdRef.current);
+        if (matchingTask) {
+          setEditingTask({ ...matchingTask });
+        }
+      }
+    }
+
     const remoteColumns = data.columns || DEFAULT_COLUMNS;
     const mergedColumns = [...remoteColumns];
     DEFAULT_COLUMNS.forEach((def, index) => {
@@ -115,6 +130,11 @@ const App: React.FC = () => {
     if (data.notifications) setNotifications(data.notifications || []);
     if (data.globalLogo) setGlobalLogo(data.globalLogo);
   };
+
+  // Ensure our ref stays synced with the open modal
+  useEffect(() => {
+    openTaskIdRef.current = editingTask?.id || null;
+  }, [editingTask?.id]);
 
   useEffect(() => {
     const setupPersistence = async () => {
@@ -139,10 +159,12 @@ const App: React.FC = () => {
             await syncBoardToSupabase(data, session?.username || 'system');
             setDbStatus('connected');
           }
+          
+          // Subscribe to live channel for instant propagation
           subscribeToBoardChanges((remoteData) => {
             setIsRemoteUpdate(true);
             updateStateFromRemote(remoteData);
-            setTimeout(() => setIsRemoteUpdate(false), 2000);
+            setTimeout(() => setIsRemoteUpdate(false), 500);
           });
         } catch (err: any) {
           setDbStatus('error');
@@ -174,19 +196,41 @@ const App: React.FC = () => {
     }
   }, [tasks, columns, clients, services, notifications, globalLogo, session, isRemoteUpdate, isInitializing]);
 
+  const triggerImmediateSync = async (updatedTasks: Task[]) => {
+    const activeSupabase = getSupabase();
+    if (!activeSupabase || !session?.username) return;
+    
+    const data: BoardData = { tasks: updatedTasks, columns, clients, services, notifications, globalLogo, version: "1.2.0" };
+    try {
+      setDbStatus('syncing');
+      await syncBoardToSupabase(data, session.username);
+      setDbStatus('connected');
+    } catch (e) {
+      setDbStatus('error');
+    }
+  };
+
   const handleSaveTask = async (taskData: Partial<Task>, closeModal: boolean = true) => {
     let finalColumnId = taskData.columnId || 'backlog';
     const taskToSave = { ...taskData, columnId: finalColumnId };
 
+    let nextTasks = [...tasks];
     if (editingTask) {
-      setTasks(prev => prev.map(t => t.id === editingTask.id ? { ...t, ...taskToSave } as Task : t));
+      const updatedTask = { ...editingTask, ...taskToSave } as Task;
+      nextTasks = tasks.map(t => t.id === editingTask.id ? updatedTask : t);
+      setTasks(nextTasks);
+      if (!closeModal) {
+        setEditingTask(updatedTask);
+        // Explicitly trigger sync for real-time feedback
+        await triggerImmediateSync(nextTasks);
+      }
     } else {
       const newTask: Task = { ...taskToSave, id: Math.random().toString(36).substr(2, 9), comments: [] } as Task;
-      setTasks(prev => [newTask, ...prev]);
+      nextTasks = [newTask, ...tasks];
+      setTasks(nextTasks);
       
       if (isReadOnly) {
         const clientName = session?.username || 'Agency Client';
-        
         const newNotif: AppNotification = {
           id: `n-${Date.now()}`,
           taskId: newTask.id,
@@ -196,7 +240,7 @@ const App: React.FC = () => {
           read: false
         };
         setNotifications(prev => [newNotif, ...prev]);
-        showToast(`Request queued for Matt.`, "success");
+        showToast(`Request queued for review.`, "success");
 
         const emailBody = `
           <div style="font-family: sans-serif; padding: 40px; border: 1px solid #e2e8f0; border-radius: 24px; color: #1e293b; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
@@ -204,39 +248,15 @@ const App: React.FC = () => {
               <span style="background: #eff6ff; color: #2563eb; padding: 6px 16px; border-radius: 100px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em;">Incoming Pulse Request</span>
             </div>
             <h2 style="color: #0f172a; margin-top: 0; font-size: 24px; font-weight: 800; text-align: center;">${newTask.title}</h2>
-            <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 25px 0;">
-            <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
-              <tr>
-                <td style="padding: 8px 0; color: #64748b; font-weight: 600; width: 120px;">Client Account</td>
-                <td style="padding: 8px 0; color: #0f172a; font-weight: 700;">${clientName}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; color: #64748b; font-weight: 600;">Priority</td>
-                <td style="padding: 8px 0; color: ${newTask.priority === 'High' ? '#e11d48' : '#2563eb'}; font-weight: 700;">${newTask.priority}</td>
-              </tr>
-            </table>
-            <div style="background: #f8fafc; padding: 25px; border-radius: 16px; margin-top: 25px; border: 1px solid #f1f5f9;">
-              <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #334155; white-space: pre-wrap;">${newTask.description}</p>
-            </div>
           </div>
         `;
 
-        const sender = "notifications@updates.marketingxp.co.uk";
-        const recipient = "matt@marketingxp.co.uk";
-
         dispatchEmailNotification({
-          from: sender,
-          to: recipient,
+          from: "notifications@updates.marketingxp.co.uk",
+          to: "matt@marketingxp.co.uk",
           subject: `[Pulse Request] ${newTask.title} - ${clientName}`,
           html: emailBody,
           resendKey: RESEND_API_KEY
-        }).then(success => {
-          if (success) {
-            console.log("Email Dispatch: Success.");
-          } else {
-            console.error("Email Dispatch: Failed.");
-            showToast("Network Alert: Cloud dispatch failed. Ensure CORS is active.", "error");
-          }
         });
       }
     }
@@ -251,11 +271,19 @@ const App: React.FC = () => {
     const newSession: UserSession = { isLoggedIn: true, username, lastLogin: new Date().toISOString(), role, clientId };
     setSession(newSession);
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(newSession));
+    setCurrentView('board');
   };
 
   const handleLogout = () => {
     setSession(null);
     sessionStorage.removeItem(SESSION_KEY);
+  };
+
+  const toggleTheme = () => {
+    const newMode = !darkMode;
+    setDarkMode(newMode);
+    localStorage.setItem(THEME_KEY, newMode ? 'dark' : 'light');
+    document.documentElement.classList.toggle('dark', newMode);
   };
 
   const sensors = useSensors(
@@ -274,93 +302,252 @@ const App: React.FC = () => {
     });
   }, [tasks, searchTerm, categoryFilter, clientFilter, session]);
 
+  const renderSyncIndicator = () => {
+    switch (dbStatus) {
+      case 'syncing':
+        return (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50/80 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-full transition-all">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+            <span className="text-[8px] font-black uppercase tracking-widest text-blue-600 dark:text-blue-400">Syncing</span>
+          </div>
+        );
+      case 'connected':
+      case 'idle':
+        return (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900 rounded-full transition-all">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Linked</span>
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50/80 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900 rounded-full transition-all">
+            <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+            <span className="text-[8px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-400 text-nowrap">Error</span>
+          </div>
+        );
+      case 'local':
+        return (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-full transition-all">
+            <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+            <span className="text-[8px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Offline</span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   if (!session?.isLoggedIn) return <LoginView onAuthenticated={handleAuthenticated} logo={globalLogo} />;
 
   const currentClient = clients.find(c => c.id === session.clientId);
 
+  const NavContent = () => (
+    <div className="flex items-center gap-1.5">
+      <button 
+        onClick={() => setCurrentView('board')} 
+        className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${currentView === 'board' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-premium' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}
+      >
+        Workflow
+      </button>
+      {isAdmin ? (
+        <>
+          <button 
+            onClick={() => setCurrentView('clients')} 
+            className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${currentView === 'clients' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-premium' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}
+          >
+            Clients
+          </button>
+          <button 
+            onClick={() => setCurrentView('services')} 
+            className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${currentView === 'services' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-premium' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}
+          >
+            Services
+          </button>
+        </>
+      ) : (
+        <button 
+          onClick={() => setCurrentView('profile')} 
+          className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${currentView === 'profile' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-premium' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}
+        >
+          Company
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className={darkMode ? 'dark' : ''}>
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-300 flex flex-col">
-        <header className="sticky top-0 z-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-6 py-3">
-          <div className="max-w-[1600px] mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-8">
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-auto overflow-hidden">
-                   <img src={globalLogo || "./assets/logo.png"} className="h-full object-contain" alt="Logo" />
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-theme flex flex-col overflow-hidden">
+        
+        <header className="sticky top-0 z-40 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50">
+          <div className="px-5 sm:px-10 py-3.5 sm:py-5">
+            <div className="max-w-[1800px] mx-auto flex items-center justify-between gap-6">
+              <div className="flex items-center gap-6 sm:gap-10 min-w-0">
+                <div className="flex items-center gap-3 sm:gap-4 flex-shrink-0 min-w-0">
+                  <div className="h-7 sm:h-10 w-auto overflow-hidden flex-shrink-0">
+                    <img src={globalLogo || "./assets/logo.png"} className="h-full object-contain" alt="Logo" />
+                  </div>
+                  
+                  <div className="h-6 w-[1.5px] bg-slate-200/60 dark:bg-slate-800 hidden md:block flex-shrink-0" />
+                  
+                  <div className="flex flex-col min-w-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <SEOIcon className="w-3.5 h-3.5 text-blue-500 hidden sm:block" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 dark:text-slate-500 leading-none truncate max-w-[120px] sm:max-w-none">
+                          {isAdmin ? 'Client Tasks' : `${currentClient?.name || 'Client'} Tasks`}
+                        </span>
+                      </div>
+                      <div className="flex-shrink-0">
+                        {renderSyncIndicator()}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-800" />
-                <span className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">MarketingPulse</span>
+
+                {/* Desktop Nav */}
+                <nav className="hidden xl:block bg-slate-100/50 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-slate-200/40 dark:border-slate-800/40">
+                  <NavContent />
+                </nav>
               </div>
-              <nav className="hidden md:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl">
-                <button onClick={() => setCurrentView('board')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'board' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Workflow</button>
-                {isAdmin ? (
-                  <>
-                    <button onClick={() => setCurrentView('clients')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'clients' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Clients</button>
-                    <button onClick={() => setCurrentView('services')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'services' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Services</button>
-                  </>
-                ) : (
-                  <button onClick={() => setCurrentView('profile')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${currentView === 'profile' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>My Profile</button>
-                )}
-              </nav>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="relative group hidden lg:block">
-                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input type="text" placeholder="Deep search..." className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl pl-10 pr-4 py-2 text-xs w-48 focus:w-64 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-              </div>
-              <div className="flex items-center gap-1">
-                <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">{darkMode ? <SunIcon /> : <MoonIcon />}</button>
-                <button onClick={handleLogout} className="p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors" title="Logout"><LogoutIcon /></button>
+
+              <div className="flex items-center gap-2.5 sm:gap-4 flex-shrink-0">
+                <div className="relative group hidden lg:block">
+                  <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                  <input 
+                    type="text" 
+                    placeholder="Quick search..." 
+                    className="bg-slate-100/80 dark:bg-slate-800/80 border border-transparent focus:border-blue-500/30 rounded-2xl pl-11 pr-5 py-2.5 text-xs w-36 focus:w-60 focus:ring-4 focus:ring-blue-500/5 transition-all outline-none dark:text-white font-medium" 
+                    value={searchTerm} 
+                    onChange={(e) => setSearchTerm(e.target.value)} 
+                  />
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={toggleTheme} 
+                    className="p-2.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-slate-700 active:scale-90"
+                    title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                  >
+                    {darkMode ? <SunIcon className="w-5 h-5" /> : <MoonIcon className="w-5 h-5" />}
+                  </button>
+                  <button 
+                    onClick={handleLogout} 
+                    className="p-2.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-all border border-transparent hover:border-rose-100 dark:hover:border-rose-900/50 active:scale-90" 
+                    title="Logout"
+                  >
+                    <LogoutIcon className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
+
+          {/* Mobile Nav Row */}
+          <div className="xl:hidden border-t border-slate-100/50 dark:border-slate-800/50 px-5 py-2 bg-slate-50/50 dark:bg-slate-950/50">
+             <div className="max-w-[1800px] mx-auto overflow-x-auto custom-scrollbar no-scrollbar">
+                <div className="flex items-center gap-2 min-w-max">
+                   <NavContent />
+                </div>
+             </div>
+          </div>
         </header>
 
-        <main className="flex-1 overflow-hidden">
+        <main className="flex-1 overflow-hidden flex flex-col">
           {currentView === 'board' ? (
-            <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={(e) => {
-              if (isReadOnly) return;
-              if (e.active.data.current?.type === 'Column') setActiveColumn(e.active.data.current.column);
-              else setActiveTask(e.active.data.current?.task || null);
-            }} onDragOver={(e) => {
-              if (isReadOnly) return;
-              const { active, over } = e;
-              if (!over || active.id === over.id || active.data.current?.type !== 'Task') return;
-              setTasks((prev) => {
-                const activeIdx = prev.findIndex(t => t.id === active.id);
-                const overIdx = prev.findIndex(t => t.id === over.id);
-                if (over.data.current?.type === 'Column') {
-                  const newTasks = [...prev];
-                  newTasks[activeIdx] = { ...newTasks[activeIdx], columnId: String(over.id) };
-                  return newTasks;
-                }
-                if (prev[activeIdx].columnId !== prev[overIdx].columnId) {
-                  const newTasks = [...prev];
-                  newTasks[activeIdx] = { ...newTasks[activeIdx], columnId: prev[overIdx].columnId };
-                  return arrayMove(newTasks, activeIdx, overIdx);
-                }
-                return arrayMove(prev, activeIdx, overIdx);
-              });
-            }} onDragEnd={() => { setActiveColumn(null); setActiveTask(null); }}>
-              <div className="h-full overflow-x-auto p-6 flex gap-6 items-start custom-scrollbar">
-                <SortableContext items={columns.map(c => c.id)} strategy={horizontalListSortingStrategy}>
-                  {columns.map(column => (
-                    <ColumnContainer
-                      key={column.id}
-                      column={column}
-                      tasks={filteredTasks.filter(t => t.columnId === column.id)}
-                      clients={sortedClients}
-                      services={services}
-                      onAddTask={(cid) => { setModalColumnId(cid); setEditingTask(null); setIsModalOpen(true); }}
-                      onEditTask={(task) => { setEditingTask(task); setIsModalOpen(true); }}
-                      onDeleteTask={(tid) => setTasks(prev => prev.filter(t => t.id !== tid))}
-                      onDeleteColumn={(id) => setColumns(prev => prev.filter(c => c.id !== id))}
-                      isReadOnly={isReadOnly}
+            <>
+              {/* Board Toolbar */}
+              <div className="bg-white/50 dark:bg-slate-900/50 border-b border-slate-200/40 dark:border-slate-800/40 px-5 sm:px-10 py-4 flex flex-wrap items-center gap-6 sm:gap-10 shadow-sm relative z-30">
+                {isAdmin && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Portfolio</span>
+                    <select 
+                      value={clientFilter} 
+                      onChange={(e) => setClientFilter(e.target.value)}
+                      className="bg-white dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700 rounded-xl px-5 py-2.5 text-[11px] font-black uppercase tracking-widest focus:ring-4 focus:ring-blue-500/5 outline-none transition-all dark:text-white appearance-none cursor-pointer hover:border-blue-500/40 shadow-sm"
+                    >
+                      <option value="All">All Accounts</option>
+                      {sortedClients.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Service</span>
+                  <select 
+                    value={categoryFilter} 
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                    className="bg-white dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700 rounded-xl px-5 py-2.5 text-[11px] font-black uppercase tracking-widest focus:ring-4 focus:ring-blue-500/5 outline-none transition-all dark:text-white appearance-none cursor-pointer hover:border-blue-500/40 shadow-sm"
+                  >
+                    <option value="All">All Verticals</option>
+                    {services.map(s => (
+                      <option key={s.id} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="lg:hidden flex-1 min-w-[160px]">
+                  <div className="relative">
+                    <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Find tasks..." 
+                      className="w-full bg-white dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700 rounded-2xl pl-11 pr-4 py-2.5 text-xs focus:ring-4 focus:ring-blue-500/5 transition-all outline-none dark:text-white font-bold" 
+                      value={searchTerm} 
+                      onChange={(e) => setSearchTerm(e.target.value)} 
                     />
-                  ))}
-                </SortableContext>
+                  </div>
+                </div>
               </div>
-            </DndContext>
+
+              <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={(e) => {
+                if (isReadOnly) return;
+                if (e.active.data.current?.type === 'Column') setActiveColumn(e.active.data.current.column);
+                else setActiveTask(e.active.data.current?.task || null);
+              }} onDragOver={(e) => {
+                if (isReadOnly) return;
+                const { active, over } = e;
+                if (!over || active.id === over.id || active.data.current?.type !== 'Task') return;
+                setTasks((prev) => {
+                  const activeIdx = prev.findIndex(t => t.id === active.id);
+                  const overIdx = prev.findIndex(t => t.id === over.id);
+                  if (over.data.current?.type === 'Column') {
+                    const newTasks = [...prev];
+                    newTasks[activeIdx] = { ...newTasks[activeIdx], columnId: String(over.id) };
+                    return newTasks;
+                  }
+                  if (prev[activeIdx].columnId !== prev[overIdx].columnId) {
+                    const newTasks = [...prev];
+                    newTasks[activeIdx] = { ...newTasks[activeIdx], columnId: prev[overIdx].columnId };
+                    return arrayMove(newTasks, activeIdx, overIdx);
+                  }
+                  return arrayMove(prev, activeIdx, overIdx);
+                });
+              }} onDragEnd={() => { setActiveColumn(null); setActiveTask(null); }}>
+                <div className="flex-1 overflow-x-auto p-6 sm:p-10 flex gap-8 items-start custom-scrollbar board-container transition-all duration-500">
+                  <SortableContext items={columns.map(c => c.id)} strategy={horizontalListSortingStrategy}>
+                    {columns.map(column => (
+                      <div key={column.id} className="column-snap flex-shrink-0">
+                          <ColumnContainer
+                              column={column}
+                              tasks={filteredTasks.filter(t => t.columnId === column.id)}
+                              clients={sortedClients}
+                              services={services}
+                              onAddTask={(cid) => { setModalColumnId(cid); setEditingTask(null); setIsModalOpen(true); }}
+                              onEditTask={(task) => { setEditingTask(task); setIsModalOpen(true); }}
+                              onDeleteTask={(tid) => setTasks(prev => prev.filter(t => t.id !== tid))}
+                              onDeleteColumn={(id) => setColumns(prev => prev.filter(c => c.id !== id))}
+                              isReadOnly={isReadOnly}
+                          />
+                      </div>
+                    ))}
+                  </SortableContext>
+                </div>
+              </DndContext>
+            </>
           ) : currentView === 'clients' ? (
             <ClientsView clients={sortedClients} tasks={tasks} onAddClient={(n, i, p, l, e) => setClients(prev => [...prev, { id: `c-${Date.now()}`, name: n, industry: i, password: p, logo: l, email: e, color: '#3b82f6' }])} onUpdateClient={(c) => setClients(prev => prev.map(x => x.id === c.id ? c : x))} onDeleteClient={(id) => setClients(prev => prev.filter(c => c.id !== id))} globalLogo={globalLogo} onUpdateGlobalLogo={setGlobalLogo} />
           ) : currentView === 'profile' && isReadOnly && currentClient ? (
@@ -390,8 +577,9 @@ const App: React.FC = () => {
         />
         
         {toast && (
-          <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-4 duration-300 ${toast.type === 'error' ? 'bg-rose-600 text-white' : toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>
-            <span className="text-xs font-bold uppercase tracking-widest text-center">{toast.message}</span>
+          <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] w-[90%] sm:w-auto px-8 py-4 rounded-[2rem] shadow-2xl flex items-center gap-4 animate-in slide-in-from-bottom-6 duration-300 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border border-white/10 dark:border-black/10">
+             <div className={`w-2 h-2 rounded-full ${toast.type === 'error' ? 'bg-rose-500' : toast.type === 'success' ? 'bg-emerald-500' : 'bg-blue-500'}`} />
+             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-center">{toast.message}</span>
           </div>
         )}
       </div>
